@@ -104,34 +104,9 @@ class MLYoloV4(MLInterface):
         colors = [[random.randint(0, 255) for _ in range(3)] for _ in range(len(self.symbols))]
         return colors
 
-    @staticmethod
-    def __plot_one_box(xyxy, img_rgb, color, label):
-        img = img_rgb[..., ::-1]
-        pt1 = (int(xyxy[0]), int(xyxy[0]))
-        pt2 = (int(xyxy[2]), int(xyxy[3]))
-
-        thickness = round(0.001 * max(img.shape[0:2])) + 1
-        cv2.rectangle(img, pt1, pt2, color, thickness)
-
-        t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fontScale=thickness / 3, thickness=thickness)[0]
-
-        c1 = (pt1[0], pt1[1] - int(t_size[1] * 1.5)) if pt1[1] - int(t_size[1] * 1.5) >= 0 else (pt1[0], pt1[1])
-        c2 = (pt1[0] + t_size[0], pt1[1]) if pt1[1] - int(t_size[1] * 1.5) >= 0 else (
-            pt1[0] + t_size[0], pt1[1] + int(t_size[1] * 1.5))
-
-        if c1[0] < 0 or c1[1] < 0:
-            x_t = c1[0] if c1[0] >= 0 else 0
-            y_t = c1[1] if c1[1] >= 0 else 0
-            c1 = (x_t, y_t)
-
-        cv2.rectangle(img, c1, c2, color, -1)
-        text_pos = (c1[0], c1[1] + t_size[1])
-        cv2.putText(img, label, text_pos, cv2.FONT_HERSHEY_SIMPLEX, thickness / 3, [255, 255, 255], thickness=thickness,
-                    lineType=cv2.LINE_AA)
-
-    def inference(self, image, threshold=0.25, is_show=True, save_path=''):
+    def inference(self, image, threshold=0.25):
         rgb_img = image[..., ::-1]
-        height, width = rgb_img[:2]
+        height, width = rgb_img.shape[:2]
         network_width = dn.network_width(self.network)
         network_height = dn.network_height(self.network)
 
@@ -140,29 +115,22 @@ class MLYoloV4(MLInterface):
 
         detections = dn.detect_image(self.network, self.class_names, darknet_img, threshold)
 
-        if is_show:
-            for detection in detections:
-                x, y, w, h = detection[2][0], \
-                             detection[2][1], \
-                             detection[2][2], \
-                             detection[2][3]
+        collection = []
+        for detection in detections:
+            x, y, w, h = detection[2][0], \
+                         detection[2][1], \
+                         detection[2][2], \
+                         detection[2][3]
 
-                conf = detection[1]
-                label = detection[0]
+            # conf = detection[1]
+            label = detection[0]
 
-                x *= width / network_width
-                w *= width / network_width
-                y *= height / network_height
-                h *= height / network_height
+            x *= width / network_width
+            w *= width / network_width
+            y *= height / network_height
+            h *= height / network_height
 
-                xyxy = np.array([x - w / 2, y - h / 2, x + w / 2, y + h / 2])
-                index = self.class_names.index(label)
-                label_conf = '{} {}'.format(label, conf)
-                self.__plot_one_box(xyxy, rgb_img, self.colors[index], label_conf)
-            bgr_img = rgb_img[..., ::-1]
+            xyxy = np.array([round(x - w / 2), round(y - h / 2), round(x + w / 2), round(y + h / 2)])
+            collection.append({label: [xyxy[0], xyxy[1], xyxy[2], xyxy[3]]})
 
-            if save_path:
-                cv2.imwrite(save_path, bgr_img)
-            return bgr_img
-
-        return [i[0] for i in sorted(detections, key=lambda k: (k[2][0], k[2][1] * 10))]
+        return collection

@@ -1,9 +1,7 @@
 import os
-import re
 import cv2
 import loader
 import json
-import threading
 import datetime
 
 from tqdm import tqdm
@@ -38,15 +36,23 @@ class IdentifyWorker(loader.ConfigLoader):
 
     """match_template/resnet/yolo"""
 
-    def predict_process(self, frame, crop_rects) -> list:
+    def predict_process(self, frame, crop_rects):
         results = []
-        for rect in crop_rects:
-            crop_img = crop_image(frame, rect)
-            # cvt_img = cv2.cvtColor(crop_img, cv2.COLOR_BGR2RGB)
-            # pil_img = Image.fromarray(cvt_img)
-            results.append(self.MT.match_template(crop_img))
 
-        return results
+        if hasattr(self, 'ML_yolo'):
+            return self.ML_yolo.inference(frame)
+        else:
+            for rect in crop_rects:
+                crop_img = crop_image(frame, rect)
+
+                if hasattr(self, 'ML_resnet'):
+                    cvt_img = cv2.cvtColor(crop_img, cv2.COLOR_BGR2RGB)
+                    pil_img = Image.fromarray(cvt_img)
+                    results.append(self.ML_resnet.inference(pil_img))
+                else:
+                    results.append(self.MT.match_template(crop_img))
+
+            return results
 
     def start(self, output, video_file, pbar_index: int):
         cap = cv2.VideoCapture(video_file)
@@ -55,6 +61,11 @@ class IdentifyWorker(loader.ConfigLoader):
         i = 1
         progress_bar = tqdm(total=total_frame, desc=output, leave=True, position=pbar_index)
 
+        with open(os.path.join(self.config_path, self.main_config["設定檔總表"]["盤面"]["設定檔路徑"]), 'r',
+                  encoding="utf-8") as sub_config:
+            sc = json.load(sub_config)
+
+        """"""
         while cap.isOpened():
             progress_bar.update(i)
 
@@ -65,10 +76,6 @@ class IdentifyWorker(loader.ConfigLoader):
             ms = cap.get(cv2.CAP_PROP_POS_MSEC)
             dt = datetime.datetime.utcfromtimestamp(ms / 1000.0).strftime('%H:%M:%S.%f')[:-3]
 
-            with open(os.path.join(self.config_path, self.main_config["設定檔總表"]["盤面"]["設定檔路徑"]), 'r',
-                      encoding="utf-8") as sub_config:
-                sc = json.load(sub_config)
-
             crop_rects = []
             for str_crop in sc["辨識範圍"]:
                 sc_elem = str_crop.split(",")
@@ -77,25 +84,36 @@ class IdentifyWorker(loader.ConfigLoader):
 
             result = self.predict_process(frame, crop_rects)
             self.__output_file(output=output, data="{}\t{}\n".format(dt, result))
-
+        """"""
+        
         cap.release()
         print("finish!!")
 
 
+"""
+TODO:
+1. Output data
+2. Symbols include spin/stop/score...
+3. Resnet read multiple weights
+4. Specified resnet weight for inference specified symbols
+5. 
+"""
+
 if __name__ == '__main__':
-    # vid = "video/星城_海神_2.mkv"
-    # fn = vid.split(".")[0]
-    # IW = IdentifyWorker()
-    # IW.start(output="{}".format(fn), video_file=vid)
+    vid = "video/"
+    fn = vid.split(".")[0]
 
-    fp = "video/"
-    threads = []
-
+    # IW = IdentifyWorker(yolo_config=dict(
+    #     {"meta_path": r"./darknet/Sea_detection/cfg/symbols.data",
+    #      "config_path": r"./darknet/Sea_detection/cfg/yolov4-tiny-obj.cfg",
+    #      "weight": r"./darknet/Sea_detection/cfg/weights/yolov4-tiny-obj_10000.weights"}))
     IW = IdentifyWorker()
-    for i, l in enumerate(os.listdir(fp)):
-        vf = l.split(".")[0]
-        threads.append(threading.Thread(target=IW.start("{}".format(vf), os.path.join(fp, l), pbar_index=i)))
-        threads[i].start()
 
-    for i in range(len(threads)):
-        threads[i].join()
+    # IW = IdentifyWorker(resnet50_weight="weights/star_city_symbols.pt")
+
+    with ProcessPoolExecutor(max_workers=2) as ex:
+
+        for l in os.listdir(vid):
+            fn = l.split(".")[0]
+
+            ex.submit(IW.start, "{}".format(fn), os.path.join(vid, l), 0)
