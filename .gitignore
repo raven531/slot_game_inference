@@ -6,3 +6,5 @@ config/
 video/
 *.txt
 darknet/
+
+lab/

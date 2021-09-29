@@ -5,13 +5,13 @@ import json
 import datetime
 
 from tqdm import tqdm
-from airtest.aircv import show_origin_size, crop_image
+from airtest.aircv import crop_image
 from PIL import Image
 
 from utils import symbol_trim
 from identify import MLResnet, CVMatchTemplate, MLYoloV4
 
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 
 
 class IdentifyWorker(loader.ConfigLoader):
@@ -52,7 +52,7 @@ class IdentifyWorker(loader.ConfigLoader):
                 else:
                     results.append(self.MT.match_template(crop_img))
 
-            return results
+            return "\t".join(results)
 
     def start(self, output, video_file, pbar_index: int):
         cap = cv2.VideoCapture(video_file)
@@ -66,6 +66,12 @@ class IdentifyWorker(loader.ConfigLoader):
             sc = json.load(sub_config)
 
         """"""
+        crop_rects = []
+        for str_crop in sc["辨識範圍"]:
+            sc_elem = str_crop.split(",")
+            crop_rects.append([int(sc_elem[0]), int(sc_elem[1]), int(sc_elem[0]) + int(sc_elem[2]),
+                               int(sc_elem[1]) + int(sc_elem[3])])
+
         while cap.isOpened():
             progress_bar.update(i)
 
@@ -76,44 +82,30 @@ class IdentifyWorker(loader.ConfigLoader):
             ms = cap.get(cv2.CAP_PROP_POS_MSEC)
             dt = datetime.datetime.utcfromtimestamp(ms / 1000.0).strftime('%H:%M:%S.%f')[:-3]
 
-            crop_rects = []
-            for str_crop in sc["辨識範圍"]:
-                sc_elem = str_crop.split(",")
-                crop_rects.append([int(sc_elem[0]), int(sc_elem[1]), int(sc_elem[0]) + int(sc_elem[2]),
-                                   int(sc_elem[1]) + int(sc_elem[3])])
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                fut = executor.submit(self.predict_process, frame=frame, crop_rects=crop_rects)
 
-            result = self.predict_process(frame, crop_rects)
-            self.__output_file(output=output, data="{}\t{}\n".format(dt, result))
+            self.__output_file(output=output, data="{}\t{}\n".format(dt, fut.result()))
         """"""
-        
+
         cap.release()
         print("finish!!")
 
 
 """
 TODO:
-1. Output data
 2. Symbols include spin/stop/score...
 3. Resnet read multiple weights
 4. Specified resnet weight for inference specified symbols
-5. 
 """
 
 if __name__ == '__main__':
-    vid = "video/"
+    vid = "video/星城_海神_4.mkv"
     fn = vid.split(".")[0]
 
-    # IW = IdentifyWorker(yolo_config=dict(
-    #     {"meta_path": r"./darknet/Sea_detection/cfg/symbols.data",
-    #      "config_path": r"./darknet/Sea_detection/cfg/yolov4-tiny-obj.cfg",
-    #      "weight": r"./darknet/Sea_detection/cfg/weights/yolov4-tiny-obj_10000.weights"}))
-    IW = IdentifyWorker()
+    IW = IdentifyWorker(yolo_config=dict({"meta_path": r"./darknet/Sea_detection/cfg/symbols.data",
+                                          "config_path": r"./darknet/Sea_detection/cfg/yolov4-tiny-obj.cfg",
+                                          "weight": r"./darknet/Sea_detection/cfg/weights/yolov4-tiny-obj_10000.weights"}),
+                        resnet50_weight="weights/star_city_symbols.pt")
 
-    # IW = IdentifyWorker(resnet50_weight="weights/star_city_symbols.pt")
-
-    with ProcessPoolExecutor(max_workers=2) as ex:
-
-        for l in os.listdir(vid):
-            fn = l.split(".")[0]
-
-            ex.submit(IW.start, "{}".format(fn), os.path.join(vid, l), 0)
+    IW.start(fn, vid, 0)
