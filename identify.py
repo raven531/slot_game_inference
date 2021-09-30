@@ -1,11 +1,7 @@
-import os
 import cv2
 import torch
 import torch.nn as nn
-import random
 import numpy as np
-
-from airtest.aircv import imread
 
 from torchvision import models, transforms
 from darknet.x64 import darknet as dn
@@ -14,22 +10,23 @@ from utils import symbol_trim
 
 
 class CVMatchTemplate:
-    def __init__(self, template_path, threshold: float = 0.8):
+    def __init__(self, cv_templates: list, threshold: float = 0.85):
         self.threshold = threshold
-
-        self.cv_templates = [{tmpl.split("_")[0]: imread(os.path.join(template_path, tmpl))} for tmpl in
-                             os.listdir(template_path)]
+        self.cv_templates = cv_templates
 
     def match_template(self, image) -> str:
         collection = []
-
         for templates in self.cv_templates:
             for symbol, cv_tmpl in templates.items():
-                ret = cv2.matchTemplate(image, cv_tmpl, cv2.TM_CCOEFF_NORMED)
-                _, max_result, _, _ = cv2.minMaxLoc(ret)
-
-                if max_result >= self.threshold:
-                    collection.append({"symbol": symbol_trim.single_trim(symbol), "conf": max_result})
+                try:
+                    ret = cv2.matchTemplate(image, cv_tmpl, cv2.TM_CCOEFF_NORMED)
+                    _, max_result, _, _ = cv2.minMaxLoc(ret)
+                    if max_result >= self.threshold:
+                        collection.append({"symbol": symbol_trim.single_trim(symbol), "conf": max_result})
+                except Exception as e:
+                    # TODO prevent template size larger than input image
+                    # print(str(e))
+                    pass
 
         collection = sorted(collection, key=lambda x: float(x["conf"]))
 
@@ -90,19 +87,14 @@ class MLResnet(MLInterface):
 
 
 class MLYoloV4(MLInterface):
-    def __init__(self, symbols, config_path, meta_path, weight_path, gpu_id=0, ):
-        super().__init__(symbols=symbols)
+    def __init__(self, config_path, meta_path, weight_path, gpu_id=0):
+        super().__init__(symbols=[])
         dn.set_gpu(gpu_id)
 
         self.network, \
         self.class_names, \
         self.class_colors = dn.load_network(config_path, meta_path, weight_path, batch_size=1)
-        self.colors = self.__color()
         # TODO: Check .weight/.pt file exist
-
-    def __color(self) -> list:
-        colors = [[random.randint(0, 255) for _ in range(3)] for _ in range(len(self.symbols))]
-        return colors
 
     def inference(self, image, threshold=0.25):
         rgb_img = image[..., ::-1]

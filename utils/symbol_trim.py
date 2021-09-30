@@ -9,7 +9,7 @@ def single_trim(symbol) -> str:
 
 
 def trim(symbols_path: str) -> list:
-    symbol_classes = [re.sub(pattern, "", l) for l in os.listdir(symbols_path)]
+    symbol_classes = [re.sub(pattern, "", l) for l in os.listdir(symbols_path) if l.endswith(".png")]
     symbol_classes = list(dict.fromkeys(symbol_classes))  # remove duplicate from list
 
     return symbol_classes
