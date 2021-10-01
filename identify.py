@@ -10,18 +10,16 @@ from utils import symbol_trim
 
 
 class CVMatchTemplate:
-    def __init__(self, cv_templates: list, threshold: float = 0.85):
-        self.threshold = threshold
-        self.cv_templates = cv_templates
 
-    def match_template(self, image) -> str:
+    @staticmethod
+    def match_template(image, _templates, threshold: float = 0.8) -> str:
         collection = []
-        for templates in self.cv_templates:
-            for symbol, cv_tmpl in templates.items():
+        for _tmpl in _templates:
+            for symbol, cv_tmpl in _tmpl.items():
                 try:
                     ret = cv2.matchTemplate(image, cv_tmpl, cv2.TM_CCOEFF_NORMED)
                     _, max_result, _, _ = cv2.minMaxLoc(ret)
-                    if max_result >= self.threshold:
+                    if max_result >= threshold:
                         collection.append({"symbol": symbol_trim.single_trim(symbol), "conf": max_result})
                 except Exception as e:
                     # TODO prevent template size larger than input image
@@ -31,7 +29,7 @@ class CVMatchTemplate:
         collection = sorted(collection, key=lambda x: float(x["conf"]))
 
         try:
-            if float(collection[0]["conf"]) >= self.threshold:
+            if float(collection[0]["conf"]) >= threshold:
                 return collection[0]["symbol"]
             else:
                 return "無法辨識"

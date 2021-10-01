@@ -7,112 +7,82 @@ from airtest.aircv import imread
 
 class ConfigLoader:
     def __init__(self):
-        self.config_path = "config/"
-        self.each_config = []
-        self.crop_rectangles = []
-        self.symbols_classes = []
-        self.cv_templates = []
+        self.config_root = "config/"
+        self.sub_config = []
 
-        self.yolo_cfg = {}
-        self.resnet_cfg = []
+        self.MT_cfg = []
+        self.YOLO_cfg = {}
+        self.ResNet_cfg = []
 
-        if not os.path.exists(self.config_path):
-            raise FileNotFoundError(self.config_path)
+        if not os.path.exists(self.config_root):
+            raise FileNotFoundError(self.config_root)
 
-        with open(os.path.join(self.config_path, "專案檔.json"), 'r', encoding="utf-8") as mc:
-            _config = json.load(mc)
+        with open(os.path.join(self.config_root, "專案檔.json"), 'r', encoding="utf-8") as mc:
+            self.__config = json.load(mc)
 
-        for output in _config["輸出順序"]:
-            with open(os.path.join(self.config_path, _config["設定檔總表"][output]["設定檔路徑"]), 'r',
-                      encoding="utf-8") as status:
-                self.each_config.append(json.load(status))
+        for output in self.__config["輸出順序"]:
+            self.sub_config.append({output: self.__config["設定檔總表"][output]["設定檔路徑"]})
 
-        self.load_match_template_cfg()
-        self.yolo_cfg = self.__yolo_cfg()
-        self.resnet_cfg = self.__load_resnet_cfg()
+        self.MT_cfg = self.__load_match_template_cfg()
+        self.ResNet_cfg = self.__load_resnet_cfg()
+        self.YOLO_cfg = self.__load_yolo_cfg()
 
-    def __yolo_cfg(self) -> dict:
-        for _config in self.each_config:
-            if _config["設定檔名稱"] == 'yolo':
-                del _config["設定檔名稱"]
-                return _config
+    @staticmethod
+    def handle_str_crop(str_crop: str) -> tuple:
+        split_rect = str_crop.split(",")
 
-    def __load_resnet_cfg(self) -> list:
-        cfg = []
-        try:
-            for _config in self.each_config:
-                if _config["設定檔名稱"] == 'resnet':
-                    for k, v in _config["symbol類型"].items():
-                        cfg.append({k: [v["pt"], v["類別"], v["辨識範圍"]]})
-        except KeyError:
-            pass
+        return (int(split_rect[0]), int(split_rect[1]), int(split_rect[0]) + int(split_rect[2]),
+                int(split_rect[1]) + int(split_rect[3]))
 
-        return cfg
-
-    def load_match_template_cfg(self):
-        self.symbols_classes = self.__load_symbol_classes()
-        self.crop_rectangles = self.load_crop_range()
-        self.cv_templates = self.__load_cv_template()
-
-    def __load_symbol_classes(self) -> list:
-        symbols_classes = []
-
-        for _config in self.each_config:
-            try:
-                symbols_path = os.path.join(self.config_path, "".join([_config["設定檔名稱"], "/", "樣版圖"]))
-                symbols_classes.append(symbol_trim.trim(symbols_path))
-            except (KeyError, FileNotFoundError):
-                pass
-
-        return symbols_classes
-
-    def load_crop_range(self, str_rect=None) -> list:
-        crop_rectangles = []
-
-        if str_rect is not None:
-            for rect in str_rect:
-                split_rect = rect.split(",")
-
-                crop_rectangles.append(
-                    [int(split_rect[0]), int(split_rect[1]), int(split_rect[0]) + int(split_rect[2]),
-                     int(split_rect[1]) + int(split_rect[3])])
-
-            return crop_rectangles
-
-        for _config in self.each_config:
-            try:
-                if _config["設定檔名稱"] == "盤面":
-                    for elem in _config["辨識範圍"]:
-                        elem = elem.split(",")
-
-                        crop_rectangles.append([int(elem[0]), int(elem[1]), int(elem[0]) + int(elem[2]),
-                                                int(elem[1]) + int(elem[3])])
-                else:
-                    for str_crop in _config["辨識範圍"]:
-                        sc_elem = str_crop.split(",")
-                        crop_rectangles.append(
-                            [int(sc_elem[0]), int(sc_elem[1]), int(sc_elem[0]) + int(sc_elem[2]),
-                             int(sc_elem[1]) + int(sc_elem[3])])
-            except KeyError:
-                pass
-
-        return crop_rectangles
-
-    def __load_cv_template(self) -> list:
-        cv_templates = []
-
-        for _config in self.each_config:
-            try:
-                cv_templates += [{symbol_trim.single_trim(tmpl_path.split("\\")[1]): imread(
-                    os.path.join(self.config_path, "".join([_config["設定檔名稱"], "/", tmpl_path]))),
-                } for tmpl_path in _config["各樣版路徑"]]
-
-            except KeyError:
-                pass
+    @staticmethod
+    def handle_read_image(tmpl_path) -> list:
+        cv_templates = [{symbol_trim.single_trim(_img): imread(os.path.join(tmpl_path, _img))} for
+                        _img in os.listdir(tmpl_path) if _img.endswith(".png")]
 
         return cv_templates
+
+    def __load_match_template_cfg(self) -> list:
+        collection = []
+
+        for output in self.sub_config:
+            for k, json_path in output.items():
+                if k == "darknet" or k == "resnet":
+                    continue
+
+                with open(os.path.join(self.config_root, json_path), 'r', encoding="utf-8") as sub_config:
+                    js_sub = json.load(sub_config)
+
+                _crop = [self.handle_str_crop(str_rect) for str_rect in js_sub["辨識範圍"]]
+                _tmpl = self.handle_read_image(os.path.join(self.config_root, "".join([k, "/", "樣版圖"])))
+
+                collection.append({k: [_tmpl, _crop, js_sub["精準度"]]})
+
+        return collection
+
+    def __load_resnet_cfg(self) -> list:
+        collection = []
+        for _config in self.sub_config:
+            for k, json_path in _config.items():
+                if k == "resnet":
+                    with open(os.path.join(self.config_root, json_path), 'r', encoding="utf-8") as resnet_cfg:
+                        rc = json.load(resnet_cfg)
+
+                    for symbol_type, items in rc["symbol類型"].items():
+                        _crop = [self.handle_str_crop(str_rect) for str_rect in items["辨識範圍"]]
+                        collection.append({symbol_type: [items["pt"], items["類別"], _crop]})
+
+        return collection
+
+    def __load_yolo_cfg(self) -> dict:
+        for _config in self.sub_config:
+            for k, json_path in _config.items():
+                if k == "darknet":
+                    with open(os.path.join(self.config_root, json_path), 'r', encoding="utf-8") as darknet_cfg:
+                        dc = json.load(darknet_cfg)
+
+                    dc.pop('設定檔名稱')
+                    return dc
 
 
 if __name__ == "__main__":
     cl = ConfigLoader()
-    print(cl.cv_templates)
