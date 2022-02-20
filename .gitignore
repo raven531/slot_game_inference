@@ -8,3 +8,6 @@ video/
 darknet/
 
 lab/
+test/
+
+test.py

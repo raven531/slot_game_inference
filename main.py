@@ -3,18 +3,12 @@ import cv2
 import loader
 import datetime
 
-import threading
-
-from tqdm import tqdm
 from airtest.aircv import crop_image
 from PIL import Image
 
 from identify import MLResnet, CVMatchTemplate, MLYoloV4
 
 from concurrent.futures import ThreadPoolExecutor
-from multiprocessing import Queue
-
-queue = Queue(maxsize=500)
 
 
 class IdentifyWorker(loader.ConfigLoader):
@@ -39,20 +33,16 @@ class IdentifyWorker(loader.ConfigLoader):
     Identify Order: MT -> Resnet50 -> YOLO
     """
 
-    def predict_process(self, frame_data):
+    def predict_process(self, dt, frame):
         results = []
         resnet_result = []
         yolo_result = []
 
-        if frame_data is None:
-            return
-
-        for dt, frame in frame_data.items():
-            for _cfg in self.MT_cfg:
-                for k, items in _cfg.items():
-                    for crop_rect in items[1]:
-                        crop_img = crop_image(frame, crop_rect)
-                        results.append(self.MT.match_template(crop_img, items[0], threshold=items[2]))
+        for _cfg in self.MT_cfg:
+            for k, items in _cfg.items():
+                for crop_rect in items[1]:
+                    crop_img = crop_image(frame, crop_rect)
+                    results.append(self.MT.match_template(crop_img, items[0], threshold=items[2]))
 
             if hasattr(self, 'ML_resnet'):
                 for _, items in self.ResNet_cfg[0].items():
@@ -66,54 +56,39 @@ class IdentifyWorker(loader.ConfigLoader):
                 yolo_result = self.ML_yolo.inference(frame)
 
             results += resnet_result
+            print(results)
 
             return dt + "\t".join(results) + str(yolo_result)
 
-    def start(self, output, pbar_index: int, total_frame: int):
+    def start(self, video: str, output, pbar_index: int):
 
-        time.sleep(2)
         # progress_bar = tqdm(total=total_frame, desc=output, leave=True, position=pbar_index)
 
-        while not queue.empty():
-            with ThreadPoolExecutor(max_workers=3) as executor:
-                fut = executor.submit(self.predict_process, queue.get())
-                print(fut.result())
-            time.sleep(5)
+        cap = cv2.VideoCapture(video)
 
-            self.__output_file(output=output, data="{}\n".format(fut.result()))
-            # progress_bar.update(1)
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+                dt = datetime.datetime.utcfromtimestamp(ms / 1000.0).strftime('%H:%M:%S.%f')[:-3]
+
+                fut = executor.submit(self.predict_process, dt, frame)
+
+        """預測結果輸出成文件"""
+        self.__output_file(output=output, data="{}\n".format(fut.result()))
+        # progress_bar.update(1)
 
         print("finish!!")
 
 
-def queue_task(cap):
-    while cap.isOpened():
-        _, frame = cap.read()
-        if frame is None:
-            queue.put(None)
-            print("done!!")
-            break
-
-        ms = cap.get(cv2.CAP_PROP_POS_MSEC)
-        dt = datetime.datetime.utcfromtimestamp(ms / 1000.0).strftime('%H:%M:%S.%f')[:-3]
-        queue.put({dt: frame})
-
-        if queue.full():
-            time.sleep(1)
-
-    cap.release()
-
-
 if __name__ == '__main__':
-    video = "video/星城_海神_2.mkv"
-
-    cap = cv2.VideoCapture(video)
-    total_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    t = threading.Thread(target=queue_task, args=(cap,))
-    t.start()
+    video = "video/影片.mkv"
 
     fn = video.split(".")[0]
 
     IW = IdentifyWorker()
 
-    IW.start(fn, 0, total_frame)
+    IW.start(video, fn, 0)
